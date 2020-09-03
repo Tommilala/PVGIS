@@ -17,16 +17,19 @@ def random_point(geometry):
     
     return point
 
-def pv_at_area(area_code, geometry, samples):
+def average_yearly_total_pv_at_area(area_code, geometry, samples):
     sample_pv = pd.Series(index=range(samples), dtype='float64')
 
     url = 'https://re.jrc.ec.europa.eu/api/mrcalc'
     for sample in range(samples):
         while True:
+
+            # use GeoSeries to convert crs and then select the only point
             point = gpd.GeoSeries(random_point(geometry), crs='EPSG:3067').to_crs('EPSG:4326')[0]
             params = {'lat': point.y, 'lon': point.x, 'optrad': 1}
             res = requests.get(url, params=params)
 
+            # points in water return 400
             if res.status_code == 200:
                 break
 
@@ -36,31 +39,11 @@ def pv_at_area(area_code, geometry, samples):
             timestamp = pd.Timestamp(datetime.datetime.strptime(row[:9], '%Y\t\t%b'))
             data.loc[timestamp] = float(row.split('\t')[-1].split('\r')[0])
 
+        # average of the sum of total PV radiation during each year
         sample_pv[sample] = data.groupby(data.index.year).sum().mean()
 
     return sample_pv.mean()
 
-
-
-# def mean_yearly_total_pv_at_location(point):
-#     url = 'https://re.jrc.ec.europa.eu/api/mrcalc'
-#     params = {'lat': point.y, 'lon': point.x, 'optrad': 1}
-
-#     res = requests.get(url, params=params)
-
-#     data = pd.Series(name='radiation', dtype='float64')
-
-#     # TODO: filter out points in water, maybe combine functions as the sampled points do not know if they are feasible (on land)
-#     for row in res.content.decode('utf-8').split('\n')[6:-4]:
-#         timestamp = pd.Timestamp(datetime.datetime.strptime(row[:9], '%Y\t\t%b'))
-#         data.loc[timestamp] = float(row.split('\t')[-1].split('\r')[0])
-
-#     # yearly_averages = pd.Series(name='yearly average PV', dtype='float64')
-    
-#     # for year, group in data.groupby(data.index.year):
-#     #     yearly_averages[str(year)] = group.mean()
-
-#     return data.groupby(data.index.year).sum().mean()
 
 
 paavo = gpd.read_file('./shapefiles/pno_tilasto_2020.shp')
@@ -70,12 +53,8 @@ data = data.set_index('Postinumeroalue')                    # read_csv param 'in
 
 for area_code, area_data in data.iterrows():
     geometry = area_data['Geometry']
-
-    # # Sample 10 points and convert to WGS84, then use PVGIS api to get values for each area code
-    # sample_points = gpd.GeoSeries([random_point(polygon) for i in range(10)], crs='EPSG:3067').to_crs('EPSG:4326')
-    # sample_pv = pd.Series([mean_yearly_total_pv_at_location(point) for point in sample_points])
     
-    mean_pv = pv_at_area(area_code, geometry, 10)
+    mean_pv = average_yearly_total_pv_at_area(area_code, geometry, 10)
 
     print(f'area code: {area_code}, mean pv: {mean_pv}')
     data.loc[area_code, 'Mean PV'] = mean_pv
