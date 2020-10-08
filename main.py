@@ -1,5 +1,6 @@
 import geopandas as gpd
 import pandas as pd
+import numpy as np
 import matplotlib.pyplot as plt
 from shapely.geometry import Point
 import random
@@ -22,7 +23,9 @@ def average_yearly_total_pv_at_area(area_code, geometry, samples):
 
     url = 'https://re.jrc.ec.europa.eu/api/mrcalc'
     for sample in range(samples):
-        while True:
+        
+        attempts = 0
+        while attempts < 50:
 
             # use GeoSeries to convert crs and then select the only point
             point = gpd.GeoSeries(random_point(geometry), crs='EPSG:3067').to_crs('EPSG:4326')[0]
@@ -32,7 +35,13 @@ def average_yearly_total_pv_at_area(area_code, geometry, samples):
             # points in water return 400
             if res.status_code == 200:
                 break
+            
+            print(f'status: {res.status_code}, content: {res.content.decode("utf-8")}')
+            attempts += 1
 
+        if attempts == 50:
+            return np.nan
+        
         data = pd.Series(name='radiation', dtype='float64')
 
         for row in res.content.decode('utf-8').split('\n')[6:-4]:
@@ -44,19 +53,23 @@ def average_yearly_total_pv_at_area(area_code, geometry, samples):
 
     return sample_pv.mean()
 
+try:
+    paavo = gpd.read_file('./shapefiles/pno_tilasto_2020.shp')
+    data = pd.read_excel('./shapefiles/alueryhmittely_posnro_2020_fi.xlsx', skiprows=4, dtype={'Postinumeroalue': 'str'})
+    data['Geometry'] = paavo
+    data = data.set_index('Postinumeroalue')                    # read_csv param 'index_col' bugs with dtype
 
+    for area_code, area_data in data.iterrows():
+        geometry = area_data['Geometry']
+        
+        mean_pv = average_yearly_total_pv_at_area(area_code, geometry, 10)
 
-paavo = gpd.read_file('./shapefiles/pno_tilasto_2020.shp')
-data = pd.read_excel('./shapefiles/alueryhmittely_posnro_2020_fi.xlsx', skiprows=4, dtype={'Postinumeroalue': 'str'})
-data['Geometry'] = paavo
-data = data.set_index('Postinumeroalue')                    # read_csv param 'index_col' bugs with dtype
+        print(f'area code: {area_code}, mean pv: {mean_pv}')
+        data.loc[area_code, 'Mean PV'] = mean_pv
+    data['Mean PV'].to_csv('results.csv')
 
-for area_code, area_data in data.iterrows():
-    geometry = area_data['Geometry']
-    
-    mean_pv = average_yearly_total_pv_at_area(area_code, geometry, 10)
+except KeyboardInterrupt:
+    data['Mean PV'].to_csv('results.csv')
 
-    print(f'area code: {area_code}, mean pv: {mean_pv}')
-    data.loc[area_code, 'Mean PV'] = mean_pv
-
-data['Mean PV'].to_csv('results.csv')
+finally: 
+    data['Mean PV'].to_csv('results.csv')
